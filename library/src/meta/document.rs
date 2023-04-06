@@ -41,7 +41,12 @@ impl LayoutRoot for DocumentElem {
             }
 
             if let Some(page) = child.to::<PageElem>() {
-                let fragment = page.layout(vt, styles)?;
+                let fragment = page.layout(
+                    vt,
+                    styles,
+                    // PANIC SAFETY: Since we always add `1` to a `usize`, it'll never be `0`.
+                    NonZeroUsize::new(pages.len() + 1).unwrap(),
+                )?;
                 pages.extend(fragment);
             } else {
                 bail!(child.span(), "unexpected document child");

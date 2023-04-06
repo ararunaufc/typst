@@ -116,7 +116,7 @@ pub struct PageElem {
     /// )
     /// ```
     #[fold]
-    pub margin: Sides<Option<Smart<Rel<Length>>>>,
+    pub margin: Smart<PageMargins>,
 
     /// How many columns the page has.
     ///
@@ -272,7 +272,12 @@ pub struct PageElem {
 
 impl PageElem {
     /// Layout the page run into a sequence of frames, one per page.
-    pub fn layout(&self, vt: &mut Vt, styles: StyleChain) -> SourceResult<Fragment> {
+    pub fn layout(
+        &self,
+        vt: &mut Vt,
+        styles: StyleChain,
+        next_page_index: NonZeroUsize,
+    ) -> SourceResult<Fragment> {
         // When one of the lengths is infinite the page fits its content along
         // that axis.
         let width = self.width(styles).unwrap_or(Abs::inf());
@@ -287,10 +292,6 @@ impl PageElem {
             min = Paper::A4.width();
         }
 
-        // Determine the margins.
-        let default = Rel::from(0.1190 * min);
-        let padding = self.margin(styles).map(|side| side.unwrap_or(default));
-
         let mut child = self.body();
 
         // Realize columns.
@@ -299,8 +300,24 @@ impl PageElem {
             child = ColumnsElem::new(child).with_count(columns).pack();
         }
 
-        // Realize margins.
-        child = child.padded(padding);
+        // Determine the margins.
+        let default = Rel::from(0.1190 * min);
+        let margin = self.margin(styles);
+        // let padding = self.margin(styles).map(|side| side.unwrap_or(default));
+
+        match margin {
+            Smart::Auto => {
+                // Preemptively realize _default_ margins. They will be applied unconditionally to every page.
+                let default = Rel::from(0.1190 * min);
+                let padding = margin.map(|side| side.unwrap_or(default));
+                child = child.padded(padding);
+            }
+            Smart::Custom(PageMargins::Sides(padding)) => {
+                // Preemptively realize _given_ margins. They will be applied unconditionally to every page.
+                child = child.padded(padding);
+            }
+            _ => todo!(),
+        }
 
         // Layout the child.
         let regions = Regions::repeat(size, size.map(Abs::is_finite));
@@ -399,6 +416,67 @@ pub struct PagebreakElem {
     /// empty.
     #[default(false)]
     pub weak: bool,
+}
+
+/// The type that results from evaluating the `margin` option when given a `dictionary`.
+type MarginSides = Sides<Option<Smart<Rel<Length>>>>;
+
+/// Defines the margins that must be applied to pages.
+#[derive(Debug, Clone, Hash)]
+enum PageMargins {
+    /// A fixed configuration with potentially missing fields.
+    Sides(MarginSides),
+    /// A closure mapping from the page index to a configuration.
+    Func(Func),
+}
+
+impl PageMargins {
+    /// Resolve the margins for the given `page_index`.
+    fn resolve(
+        &self,
+        vt: &mut Vt,
+        page_index: NonZeroUsize,
+    ) -> SourceResult<MarginSides> {
+        Ok(match self {
+            Self::Sides(s) => s.clone(),
+            Self::Func(f) => f
+                .call_vt(vt, [Value::Int(page_index.get() as i64)])?
+                .cast()
+                .at(f.span())?,
+        })
+    }
+}
+
+impl Fold for PageMargins {
+    type Output = ChainedPageMargins;
+
+    fn fold(self, outer: Self::Output) -> Self::Output {
+        match (self, outer) {
+            (PageMargins::Sides(si), ChainedPageMargins::Size(so)) => si.fold(so),
+            _ => todo!(),
+        }
+    }
+}
+
+cast_from_value! {
+    PageMargins,
+    s: Sides<Option<Smart<Rel<Length>>>> => Self::Sides(s),
+    f: Func => Self::Func(f),
+}
+
+cast_to_value! {
+    v: PageMargins => match v {
+        PageMargins::Sides(s) => s.into(),
+        PageMargins::Func(f) => f.into(),
+    }
+}
+
+/// The result of folding `PageMargins` over all active rules.
+enum ChainedPageMargins {
+    /// Margins should apply for all pages, unconditionally.
+    Size(<MarginSides as Fold>::Output),
+    /// Margins will be determined by executing a function.
+    Func(Func),
 }
 
 /// A header, footer, foreground or background definition.
