@@ -116,7 +116,7 @@ pub struct PageElem {
     /// )
     /// ```
     #[fold]
-    pub margin: Smart<PageMargins>,
+    pub margin: PageMargins,
 
     /// How many columns the page has.
     ///
@@ -300,97 +300,123 @@ impl PageElem {
             child = ColumnsElem::new(child).with_count(columns).pack();
         }
 
-        // Determine the margins.
-        let default = Rel::from(0.1190 * min);
+        let default_margin = Rel::from(0.1190 * min);
         let margin = self.margin(styles);
-        // let padding = self.margin(styles).map(|side| side.unwrap_or(default));
 
-        match margin {
-            Smart::Auto => {
-                // Preemptively realize _default_ margins. They will be applied unconditionally to every page.
-                let default = Rel::from(0.1190 * min);
-                let padding = margin.map(|side| side.unwrap_or(default));
-                child = child.padded(padding);
-            }
-            Smart::Custom(PageMargins::Sides(padding)) => {
-                // Preemptively realize _given_ margins. They will be applied unconditionally to every page.
-                child = child.padded(padding);
-            }
-            _ => todo!(),
-        }
+        // * NOTE: If there is any active `Func` rule, the chain will either
+        // *       have more than one element or its single element will be that.
+        // *       (See `impl Fold for PageMargins`.)
+        // Check if there are any dynamic rules to be used
+        let static_margins = margin.len() <= 1
+            && !matches!(margin.first(), Some(FoldedMarginRule::Func(_)));
 
         // Layout the child.
-        let regions = Regions::repeat(size, size.map(Abs::is_finite));
-        let mut fragment = child.layout(vt, styles, regions)?;
+        let mut fragment = if static_margins {
+            // * NOTE: In case there is no dynamic margin rule, we can preemptively realize the margins
+            // *       and layout the child completely.
+            let regions = Regions::repeat(size, size.map(Abs::is_finite));
+            let padding =
+                self.realize_margins(&margin, vt, default_margin, next_page_index)?;
 
-        let fill = self.fill(styles);
-        let foreground = self.foreground(styles);
-        let background = self.background(styles);
-        let header = self.header(styles);
-        let header_ascent = self.header_ascent(styles);
-        let footer = self.footer(styles).or_else(|| {
-            self.numbering(styles).map(|numbering| {
-                let both = match &numbering {
-                    Numbering::Pattern(pattern) => pattern.pieces() >= 2,
-                    Numbering::Func(_) => true,
-                };
-                Counter::new(CounterKey::Page)
-                    .display(Some(numbering), both)
-                    .aligned(self.number_align(styles))
-            })
-        });
-        let footer_descent = self.footer_descent(styles);
+            child = child.padded(padding);
+            let mut fragment = child.layout(vt, styles, regions)?;
 
-        let numbering_meta = FrameItem::Meta(
-            Meta::PageNumbering(self.numbering(styles).into()),
-            Size::zero(),
-        );
+            let fill = self.fill(styles);
+            let foreground = self.foreground(styles);
+            let background = self.background(styles);
+            let header = self.header(styles);
+            let header_ascent = self.header_ascent(styles);
+            let footer = self.footer(styles).or_else(|| {
+                self.numbering(styles).map(|numbering| {
+                    let both = match &numbering {
+                        Numbering::Pattern(pattern) => pattern.pieces() >= 2,
+                        Numbering::Func(_) => true,
+                    };
+                    Counter::new(CounterKey::Page)
+                        .display(Some(numbering), both)
+                        .aligned(self.number_align(styles))
+                })
+            });
+            let footer_descent = self.footer_descent(styles);
 
-        // Realize overlays.
-        for frame in &mut fragment {
-            frame.prepend(Point::zero(), numbering_meta.clone());
-            let size = frame.size();
-            let pad = padding.resolve(styles).relative_to(size);
-            let pw = size.x - pad.left - pad.right;
-            for marginal in [&header, &footer, &background, &foreground] {
-                let Some(content) = marginal else { continue };
+            let numbering_meta = FrameItem::Meta(
+                Meta::PageNumbering(self.numbering(styles).into()),
+                Size::zero(),
+            );
 
-                let (pos, area, align);
-                if ptr::eq(marginal, &header) {
-                    let ascent = header_ascent.relative_to(pad.top);
-                    pos = Point::with_x(pad.left);
-                    area = Size::new(pw, pad.top - ascent);
-                    align = Align::Bottom.into();
-                } else if ptr::eq(marginal, &footer) {
-                    let descent = footer_descent.relative_to(pad.bottom);
-                    pos = Point::new(pad.left, size.y - pad.bottom + descent);
-                    area = Size::new(pw, pad.bottom - descent);
-                    align = Align::Top.into();
-                } else {
-                    pos = Point::zero();
-                    area = size;
-                    align = Align::CENTER_HORIZON.into();
-                };
+            // Realize overlays.
+            for frame in &mut fragment {
+                frame.prepend(Point::zero(), numbering_meta.clone());
+                let size = frame.size();
+                let pad = padding.resolve(styles).relative_to(size);
+                let pw = size.x - pad.left - pad.right;
+                for marginal in [&header, &footer, &background, &foreground] {
+                    let Some(content) = marginal else { continue };
 
-                let pod = Regions::one(area, Axes::splat(true));
-                let sub = content
-                    .clone()
-                    .styled(AlignElem::set_alignment(align))
-                    .layout(vt, styles, pod)?
-                    .into_frame();
-                if ptr::eq(marginal, &header) || ptr::eq(marginal, &background) {
-                    frame.prepend_frame(pos, sub);
-                } else {
-                    frame.push_frame(pos, sub);
+                    let (pos, area, align);
+                    if ptr::eq(marginal, &header) {
+                        let ascent = header_ascent.relative_to(pad.top);
+                        pos = Point::with_x(pad.left);
+                        area = Size::new(pw, pad.top - ascent);
+                        align = Align::Bottom.into();
+                    } else if ptr::eq(marginal, &footer) {
+                        let descent = footer_descent.relative_to(pad.bottom);
+                        pos = Point::new(pad.left, size.y - pad.bottom + descent);
+                        area = Size::new(pw, pad.bottom - descent);
+                        align = Align::Top.into();
+                    } else {
+                        pos = Point::zero();
+                        area = size;
+                        align = Align::CENTER_HORIZON.into();
+                    };
+
+                    let pod = Regions::one(area, Axes::splat(true));
+                    let sub = content
+                        .clone()
+                        .styled(AlignElem::set_alignment(align))
+                        .layout(vt, styles, pod)?
+                        .into_frame();
+                    if ptr::eq(marginal, &header) || ptr::eq(marginal, &background) {
+                        frame.prepend_frame(pos, sub);
+                    } else {
+                        frame.push_frame(pos, sub);
+                    }
+                }
+
+                if let Some(fill) = &fill {
+                    frame.fill(fill.clone());
                 }
             }
 
-            if let Some(fill) = &fill {
-                frame.fill(fill.clone());
-            }
-        }
+            fragment
+        } else {
+            // * NOTE: If there are any dynamic rules, we will have to layout the child one page at a time.
+            todo!()
+        };
 
         Ok(fragment)
+    }
+
+    /// Determines the actual margin values to be applied to the page at index
+    /// `page_index` by finally folding all rules in the chain after
+    /// executing the custom rules the user has provided.
+    fn realize_margins(
+        &self,
+        margin: &[FoldedMarginRule],
+        vt: &mut Vt,
+        default_margin: Rel<Length>,
+        page_index: NonZeroUsize,
+    ) -> SourceResult<Sides<Rel<Length>>> {
+        // * NOTE: Notice that the rules in `margin` are arranged from outermost
+        // *       to innermost scope, thus this folding needs to be aware of it.
+        // *       (See `impl Fold for PageMargins`)
+        let folded =
+            margin.iter().fold(Ok(Sides::splat(Smart::Auto)), |outer, rule| {
+                rule.fold(outer?, vt, page_index)
+            })?;
+        let realized = folded.map(|side| side.unwrap_or(default_margin));
+
+        Ok(realized)
     }
 }
 
@@ -421,62 +447,122 @@ pub struct PagebreakElem {
 /// The type that results from evaluating the `margin` option when given a `dictionary`.
 type MarginSides = Sides<Option<Smart<Rel<Length>>>>;
 
-/// Defines the margins that must be applied to pages.
+/// Defines how to calculate the margins that must be applied to pages.
 #[derive(Debug, Clone, Hash)]
-enum PageMargins {
-    /// A fixed configuration with potentially missing fields.
-    Sides(MarginSides),
-    /// A closure mapping from the page index to a configuration.
+pub enum PageMargins {
+    /// A static configuration with potentially missing fields. Represents a
+    /// `dictionary` given by the user.
+    MarginSides(MarginSides),
+    /// A dynamic mapping from the page index to a configuration. Represents a
+    /// `function`, given by the user, that must return a compatible `dictionary`.
     Func(Func),
 }
 
-impl PageMargins {
-    /// Resolve the margins for the given `page_index`.
-    fn resolve(
-        &self,
-        vt: &mut Vt,
-        page_index: NonZeroUsize,
-    ) -> SourceResult<MarginSides> {
-        Ok(match self {
-            Self::Sides(s) => s.clone(),
-            Self::Func(f) => f
-                .call_vt(vt, [Value::Int(page_index.get() as i64)])?
-                .cast()
-                .at(f.span())?,
-        })
+impl From<MarginSides> for PageMargins {
+    fn from(value: MarginSides) -> Self {
+        Self::MarginSides(value)
     }
 }
 
+/// Folds a chain of active definitions of the `margin` parameter into a chain
+/// of "consolidated" ones, represented by `FoldedMarginRule`.
+///
+/// This works by folding adjacent `PageMargins::MarginSides` in the chain into
+/// a single `FoldedMarginRule::FoldedSides` and gathering the resulting chain
+/// into a `Vec`.
+///
+/// Notice that we fold rules from outermost to innermost, so the resulting `Vec`
+/// will be arranged in this same order.
 impl Fold for PageMargins {
-    type Output = ChainedPageMargins;
+    type Output = Vec<FoldedMarginRule>;
 
-    fn fold(self, outer: Self::Output) -> Self::Output {
-        match (self, outer) {
-            (PageMargins::Sides(si), ChainedPageMargins::Size(so)) => si.fold(so),
-            _ => todo!(),
-        }
+    fn fold(self, mut outer: Self::Output) -> Self::Output {
+        // Determine the next element to put into the chain, folding it with the previous one if possible.
+        let folded = match (self, outer.pop()) {
+            // If `self` is a `dictionary` and the first rule for the chain.
+            (PageMargins::MarginSides(i), None) => {
+                FoldedMarginRule::FoldedSides(i.fold(Default::default()))
+            }
+            // If `self` is a `dictionary` and we have an already folded `dictionary`.
+            (PageMargins::MarginSides(i), Some(FoldedMarginRule::FoldedSides(o))) => {
+                FoldedMarginRule::FoldedSides(i.fold(o))
+            }
+            // If `self` is a `function`, we cannot fold it, so we just add it to the chain.
+            (PageMargins::Func(f), None) => FoldedMarginRule::Func(f),
+            // If `self` is a `function`, we cannot fold it, so we just add it to the chain.
+            (PageMargins::Func(f), Some(anything)) => {
+                // We must put this element back in the chain before continuing
+                outer.push(anything);
+                FoldedMarginRule::Func(f)
+            }
+            // `self` should never be `FoldedSides` nor the last element in the chain be `MarginSides`.
+            _ => unreachable!(
+                "It should not make sense to fold `PageMargins` more than once."
+            ),
+        };
+
+        outer.push(folded);
+        outer
     }
 }
 
 cast_from_value! {
     PageMargins,
-    s: Sides<Option<Smart<Rel<Length>>>> => Self::Sides(s),
+    s: MarginSides => Self::MarginSides(s),
     f: Func => Self::Func(f),
 }
 
 cast_to_value! {
     v: PageMargins => match v {
-        PageMargins::Sides(s) => s.into(),
+        PageMargins::MarginSides(s) => s.into(),
         PageMargins::Func(f) => f.into(),
     }
 }
 
+type FoldedSides = Sides<Smart<Rel<Length>>>;
+
 /// The result of folding `PageMargins` over all active rules.
-enum ChainedPageMargins {
-    /// Margins should apply for all pages, unconditionally.
-    Size(<MarginSides as Fold>::Output),
-    /// Margins will be determined by executing a function.
+pub enum FoldedMarginRule {
+    /// A consolidated `dictionary` of margin values.
+    FoldedSides(FoldedSides),
+    /// A function to determine a `dictionary` of margin values dynamically.
     Func(Func),
+}
+
+impl FoldedMarginRule {
+    /// Folds the current rule into the `outer` rule.
+    ///
+    /// If the current rule is dynamic (a `function`), calls it in order to
+    /// determine the actual rule for the page at `page_index`.
+    fn fold(
+        &self,
+        outer: FoldedSides,
+        vt: &mut Vt,
+        page_index: NonZeroUsize,
+    ) -> SourceResult<FoldedSides> {
+        match self {
+            FoldedMarginRule::FoldedSides(inner) => {
+                // Fold the current (inner) config over the accumulated (outer)
+                Ok(inner.zip(outer).map(|(inner, outer)| inner.fold(outer)))
+            }
+            FoldedMarginRule::Func(f) => {
+                // Execute the `function` to obtain the current config (inner)
+                // and fold it over the accumulated (outer)
+                let inner = f
+                    .call_vt(vt, vec![Value::Int(page_index.get() as i64)])?
+                    .cast::<MarginSides>()
+                    .at(f.span())?;
+
+                Ok(inner.fold(outer))
+            }
+        }
+    }
+}
+
+impl From<FoldedSides> for FoldedMarginRule {
+    fn from(value: FoldedSides) -> Self {
+        FoldedMarginRule::FoldedSides(value)
+    }
 }
 
 /// A header, footer, foreground or background definition.

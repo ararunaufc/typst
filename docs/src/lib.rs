@@ -42,9 +42,9 @@ static LIBRARY: Lazy<Prehashed<Library>> = Lazy::new(|| {
     lib.styles
         .set(PageElem::set_width(Smart::Custom(Abs::pt(240.0).into())));
     lib.styles.set(PageElem::set_height(Smart::Auto));
-    lib.styles.set(PageElem::set_margin(Sides::splat(Some(Smart::Custom(
-        Abs::pt(15.0).into(),
-    )))));
+    lib.styles.set(PageElem::set_margin(
+        Sides::splat(Some(Smart::Custom(Abs::pt(15.0).into()))).into(),
+    ));
     typst::eval::set_lang_items(lib.items.clone());
     Prehashed::new(lib)
 });
