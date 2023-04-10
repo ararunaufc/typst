@@ -363,7 +363,7 @@ impl Layout for BlockElem {
             pod.expand = expand;
 
             if expand.y {
-                pod.full = size.y;
+                pod.full_height = size.y;
             }
 
             // Generate backlog for fixed height.
@@ -384,8 +384,8 @@ impl Layout for BlockElem {
                 }
 
                 pod.size.y = heights[0];
-                pod.backlog = &heights[1..];
-                pod.last = None;
+                pod.backlog_height = &heights[1..];
+                pod.last_height = None;
             }
 
             let mut frames = body.layout(vt, styles, pod)?.into_frames();

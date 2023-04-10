@@ -3,17 +3,21 @@ use std::fmt::{self, Debug, Formatter};
 use typst::geom::{Abs, Axes, Size};
 
 /// A sequence of regions to layout into.
+///
+/// Each region in this sequence represents the dimensions of single continuous
+/// rectangular area and determines the available space that elements have to
+/// layout themselves into.
 #[derive(Copy, Clone, Hash)]
 pub struct Regions<'a> {
     /// The remaining size of the first region.
     pub size: Size,
     /// The full height of the region for relative sizing.
-    pub full: Abs,
+    pub full_height: Abs,
     /// The height of followup regions. The width is the same for all regions.
-    pub backlog: &'a [Abs],
+    pub backlog_height: &'a [Abs],
     /// The height of the final region that is repeated once the backlog is
     /// drained. The width is the same for all regions.
-    pub last: Option<Abs>,
+    pub last_height: Option<Abs>,
     /// Whether elements should expand to fill the regions instead of shrinking
     /// to fit the content.
     pub expand: Axes<bool>,
@@ -24,9 +28,9 @@ impl Regions<'_> {
     pub fn one(size: Size, expand: Axes<bool>) -> Self {
         Self {
             size,
-            full: size.y,
-            backlog: &[],
-            last: None,
+            full_height: size.y,
+            backlog_height: &[],
+            last_height: None,
             expand,
         }
     }
@@ -35,9 +39,9 @@ impl Regions<'_> {
     pub fn repeat(size: Size, expand: Axes<bool>) -> Self {
         Self {
             size,
-            full: size.y,
-            backlog: &[],
-            last: Some(size.y),
+            full_height: size.y,
+            backlog_height: &[],
+            last_height: Some(size.y),
             expand,
         }
     }
@@ -47,7 +51,7 @@ impl Regions<'_> {
     ///
     /// This is also used for relative sizing.
     pub fn base(&self) -> Size {
-        Size::new(self.size.x, self.full)
+        Size::new(self.size.x, self.full_height)
     }
 
     /// Create new regions where all sizes are mapped with `f`.
@@ -60,12 +64,12 @@ impl Regions<'_> {
     {
         let x = self.size.x;
         backlog.clear();
-        backlog.extend(self.backlog.iter().map(|&y| f(Size::new(x, y)).y));
+        backlog.extend(self.backlog_height.iter().map(|&y| f(Size::new(x, y)).y));
         Regions {
             size: f(self.size),
-            full: f(Size::new(x, self.full)).y,
-            backlog,
-            last: self.last.map(|y| f(Size::new(x, y)).y),
+            full_height: f(Size::new(x, self.full_height)).y,
+            backlog_height: backlog,
+            last_height: self.last_height.map(|y| f(Size::new(x, y)).y),
             expand: self.expand,
         }
     }
@@ -79,22 +83,23 @@ impl Regions<'_> {
     ///
     /// If this is true, calling `next()` will have no effect.
     pub fn in_last(&self) -> bool {
-        self.backlog.is_empty() && self.last.map_or(true, |height| self.size.y == height)
+        self.backlog_height.is_empty()
+            && self.last_height.map_or(true, |height| self.size.y == height)
     }
 
     /// Advance to the next region if there is any.
     pub fn next(&mut self) {
         if let Some(height) = self
-            .backlog
+            .backlog_height
             .split_first()
             .map(|(first, tail)| {
-                self.backlog = tail;
+                self.backlog_height = tail;
                 *first
             })
-            .or(self.last)
+            .or(self.last_height)
         {
             self.size.y = height;
-            self.full = height;
+            self.full_height = height;
         }
     }
 
@@ -104,8 +109,8 @@ impl Regions<'_> {
     /// This iterator may be infinite.
     pub fn iter(&self) -> impl Iterator<Item = Size> + '_ {
         let first = std::iter::once(self.size);
-        let backlog = self.backlog.iter();
-        let last = self.last.iter().cycle();
+        let backlog = self.backlog_height.iter();
+        let last = self.last_height.iter().cycle();
         first.chain(backlog.chain(last).map(|&h| Size::new(self.size.x, h)))
     }
 }
@@ -116,11 +121,11 @@ impl Debug for Regions<'_> {
         let mut list = f.debug_list();
         let mut prev = self.size.y;
         list.entry(&self.size);
-        for &height in self.backlog {
+        for &height in self.backlog_height {
             list.entry(&Size::new(self.size.x, height));
             prev = height;
         }
-        if let Some(last) = self.last {
+        if let Some(last) = self.last_height {
             if last != prev {
                 list.entry(&Size::new(self.size.x, last));
             }

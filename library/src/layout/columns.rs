@@ -70,7 +70,7 @@ impl Layout for ColumnsElem {
         let width = (regions.size.x - gutter * (columns - 1) as f64) / columns as f64;
 
         let backlog: Vec<_> = std::iter::once(&regions.size.y)
-            .chain(regions.backlog)
+            .chain(regions.backlog_height)
             .flat_map(|&height| std::iter::repeat(height).take(columns))
             .skip(1)
             .collect();
@@ -78,9 +78,9 @@ impl Layout for ColumnsElem {
         // Create the pod regions.
         let pod = Regions {
             size: Size::new(width, regions.size.y),
-            full: regions.full,
-            backlog: &backlog,
-            last: regions.last,
+            full_height: regions.full_height,
+            backlog_height: &backlog,
+            last_height: regions.last_height,
             expand: Axes::new(true, regions.expand.y),
         };
 

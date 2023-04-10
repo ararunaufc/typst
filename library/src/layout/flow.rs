@@ -60,7 +60,8 @@ impl Layout for FlowElem {
             } else if child.can::<dyn Layout>() {
                 layouter.layout_multiple(vt, child, styles)?;
             } else if child.is::<ColbreakElem>() {
-                if !layouter.regions.backlog.is_empty() || layouter.regions.last.is_some()
+                if !layouter.regions.backlog_height.is_empty()
+                    || layouter.regions.last_height.is_some()
                 {
                     layouter.finish_region();
                 }
@@ -326,7 +327,7 @@ impl<'a> FlowLayouter<'a> {
     /// Finish layouting and return the resulting fragment.
     fn finish(mut self) -> Fragment {
         if self.expand.y {
-            while !self.regions.backlog.is_empty() {
+            while !self.regions.backlog_height.is_empty() {
                 self.finish_region();
             }
         }

@@ -551,7 +551,7 @@ impl<'a, 'v> GridLayouter<'a, 'v> {
                 let size = Size::new(rcol, height);
                 let mut pod = Regions::one(size, Axes::splat(true));
                 if self.rows[y] == Sizing::Auto {
-                    pod.full = self.regions.full;
+                    pod.full_height = self.regions.full_height;
                 }
                 let frame = cell.layout(self.vt, self.styles, pod)?.into_frame();
                 output.push_frame(pos, frame);
@@ -574,8 +574,8 @@ impl<'a, 'v> GridLayouter<'a, 'v> {
         // Prepare regions.
         let size = Size::new(self.width, heights[0]);
         let mut pod = Regions::one(size, Axes::splat(true));
-        pod.full = self.regions.full;
-        pod.backlog = &heights[1..];
+        pod.full_height = self.regions.full_height;
+        pod.backlog_height = &heights[1..];
 
         // Layout the row.
         let mut pos = Point::zero();
@@ -631,7 +631,7 @@ impl<'a, 'v> GridLayouter<'a, 'v> {
             let (frame, y) = match row {
                 Row::Frame(frame, y) => (frame, y),
                 Row::Fr(v, y) => {
-                    let remaining = self.regions.full - used;
+                    let remaining = self.regions.full_height - used;
                     let height = v.share(fr, remaining);
                     (self.layout_single_row(height, y)?, y)
                 }
